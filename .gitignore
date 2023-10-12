@@ -16,6 +16,7 @@
 *.bz2
 *.c.[012]*.*
 *.dtb
+*.dtbo
 *.dtb.S
 *.dwo
 *.elf
@@ -135,3 +136,13 @@ all.config
 
 # fetched Android config fragments
 kernel/configs/android-*.cfg
+
+# Tech package directories
+#techpack/
+
+# Trash
+out/
+*.zip
+*.log
+build.sh
+buildlos.sh
