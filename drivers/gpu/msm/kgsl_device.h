@@ -50,10 +50,8 @@ enum kgsl_event_results {
 	KGSL_EVENT_CANCELLED = 2,
 };
 
-#define KGSL_FLAG_WAKE_ON_TOUCH   BIT(0)
-#define KGSL_FLAG_SPARSE          BIT(1)
-#define KGSL_FLAG_USE_SHMEM       BIT(2)
-#define KGSL_FLAG_PROCESS_RECLAIM BIT(3)
+#define KGSL_FLAG_WAKE_ON_TOUCH BIT(0)
+#define KGSL_FLAG_SPARSE        BIT(1)
 
 /*
  * "list" of event types for ftrace symbolic magic
@@ -487,10 +485,6 @@ struct kgsl_process_private {
 	 * @cmd_count: The number of cmds that are active for the process
 	 */
 	atomic_t cmd_count;
-	/**
-	 * @private_mutex: Mutex lock to protect kgsl_process_private
-	 */
-	struct mutex private_mutex;
 };
 
 /**

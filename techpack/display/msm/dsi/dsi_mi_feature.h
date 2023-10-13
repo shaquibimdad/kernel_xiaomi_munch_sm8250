@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,9 +89,18 @@ enum DISPPARAM_MODE  {
 	DISPPARAM_FLAT_MODE_OFF        = 0x6000000,
 	DISPPARAM_DITHER_ON            = 0x7000000,
 	DISPPARAM_DITHER_OFF           = 0x8000000,
+	DISPPARAM_DFPS_IDLE_ON         = 0xA000000,
+	DISPPARAM_DFPS_IDLE_OFF        = 0xB000000,
 	DISPPARAM_SET_THERMAL_HBM_DISABLE     = 0xC000000,
 	DISPPARAM_CLEAR_THERMAL_HBM_DISABLE   = 0xD000000,
 
+	DISPPARAM_DFPS_LEVEL1          = 0x10000000,
+	DISPPARAM_DFPS_LEVEL2          = 0x20000000,
+	DISPPARAM_DFPS_LEVEL3          = 0x30000000,
+	DISPPARAM_DFPS_LEVEL4          = 0x40000000,
+	DISPPARAM_DFPS_LEVEL5          = 0x50000000,
+	DISPPARAM_DFPS_LEVEL6          = 0x60000000,
+	DISPPARAM_DFPS_LEVEL7          = 0x70000000,
 	DISPPARAM_GIR_ON               = 0xE0000000,
 	DISPPARAM_GIR_OFF              = 0xF0000000,
 };

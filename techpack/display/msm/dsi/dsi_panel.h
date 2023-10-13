@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021 XiaoMi, Inc.
  */
 
 #ifndef _DSI_PANEL_H_
@@ -148,10 +149,8 @@ struct dsi_panel_reset_config {
 	u32 count;
 
 	int reset_gpio;
-	int tp_reset_gpio;
 	int disp_en_gpio;
 	int lcd_mode_sel_gpio;
-	u32 reset_powerdown_delay;
 	u32 mode_sel_state;
 };
 
@@ -178,11 +177,13 @@ struct drm_panel_esd_config {
 	u32 groups;
 };
 
+#ifdef CONFIG_OSSFOD
 #define BRIGHTNESS_ALPHA_PAIR_LEN 2
 struct brightness_alpha_pair {
 	u32 brightness;
 	u32 alpha;
 };
+#endif
 
 struct dsi_panel {
 	const char *name;
@@ -211,7 +212,6 @@ struct dsi_panel {
 
 	struct dsi_regulator_info power_info;
 	struct dsi_backlight_config bl_config;
-	struct dsi_backlight_config bl_slaver_config;
 	struct dsi_panel_reset_config reset_config;
 	struct dsi_pinctrl_info pinctrl;
 	struct drm_panel_hdr_properties hdr_props;
@@ -219,6 +219,7 @@ struct dsi_panel {
 
 	struct dsi_parser_utils utils;
 
+	u32 init_delay_us;
 	bool lp11_init;
 	bool ulps_feature_enabled;
 	bool ulps_suspend_enabled;
@@ -236,13 +237,14 @@ struct dsi_panel {
 	bool sync_broadcast_en;
 
 	struct dsi_panel_mi_cfg mi_cfg;
-
 	int panel_test_gpio;
 	int power_mode;
 	enum dsi_panel_physical_type panel_type;
 
+#ifdef CONFIG_OSSFOD
 	struct brightness_alpha_pair *fod_dim_lut;
 	u32 fod_dim_lut_count;
+#endif
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)
@@ -379,8 +381,10 @@ int dsi_panel_create_cmd_packets(const char *data,
 void dsi_panel_destroy_cmd_packets(struct dsi_panel_cmd_set *set);
 void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
 
+#ifdef CONFIG_OSSFOD
 int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status);
 
 u32 dsi_panel_get_fod_dim_alpha(struct dsi_panel *panel);
+#endif
 
 #endif /* _DSI_PANEL_H_ */

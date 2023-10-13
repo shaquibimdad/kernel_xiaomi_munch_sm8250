@@ -76,7 +76,7 @@ static int bd_cdev_set_cur_brightness_clone(struct thermal_cooling_device *cdev,
 		return -EINVAL;
 
 	brightness_lvl = cdev_clone->panel->mi_cfg.max_brightness_clone - state;
-	if (brightness_lvl == bd->thermal_brightness_clone_limit)
+	if (brightness_lvl == bd->thermal_brightness_limit)
 		return 0;
 	bd->thermal_brightness_clone_limit = brightness_lvl;
 	SDE_INFO("backup_brightness_clone[%d], thermal limit[%d]\n", bd->props.brightness_clone_backup, bd->thermal_brightness_clone_limit);
@@ -86,7 +86,7 @@ static int bd_cdev_set_cur_brightness_clone(struct thermal_cooling_device *cdev,
 				bd->props.brightness_clone_backup :
 				bd->thermal_brightness_clone_limit;
 	bd->props.brightness_clone = brightness_lvl;
-        sysfs_notify(&bd->dev.kobj, NULL, "brightness_clone");
+	sysfs_notify(&bd->dev.kobj, NULL, "brightness_clone");
 #else
 	sysfs_notify(&cdev->device.kobj, NULL, "cur_state");
 #endif

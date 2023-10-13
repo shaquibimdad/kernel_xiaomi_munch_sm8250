@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -12,7 +12,6 @@
 #include <linux/io.h>
 #include <linux/ion.h>
 #include <linux/mman.h>
-#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/msm-bus.h>
 #include <linux/of.h>
@@ -238,7 +237,6 @@ static struct kgsl_mem_entry *kgsl_mem_entry_create(void)
 		atomic_set(&entry->map_count, 0);
 	}
 
-	atomic_set(&entry->map_count, 0);
 	return entry;
 }
 
@@ -977,10 +975,6 @@ static struct kgsl_process_private *kgsl_process_private_new(
 		if (private->pid == cur_pid) {
 			if (!kgsl_process_private_get(private)) {
 				private = ERR_PTR(-EINVAL);
-			}else{
-				mutex_lock(&private->private_mutex);
-				private->fd_count++;
-				mutex_unlock(&private->private_mutex);
 			}
 			/*
 			 * We need to hold only one reference to the PID for
@@ -1001,7 +995,6 @@ static struct kgsl_process_private *kgsl_process_private_new(
 
 	kref_init(&private->refcount);
 
-	private->fd_count = 1;
 	private->pid = cur_pid;
 	get_task_comm(private->comm, current->group_leader);
 
@@ -1094,39 +1087,29 @@ static void kgsl_process_private_close(struct kgsl_device_private *dev_priv,
 	kgsl_process_private_put(private);
 }
 
-static struct kgsl_process_private *_process_private_open(
-		struct kgsl_device *device)
-{
-	struct kgsl_process_private *private;
-
-	mutex_lock(&kgsl_driver.process_mutex);
-	private = kgsl_process_private_new(device);
-	mutex_unlock(&kgsl_driver.process_mutex);
-
-	return private;
-}
 
 static struct kgsl_process_private *kgsl_process_private_open(
 		struct kgsl_device *device)
 {
 	struct kgsl_process_private *private;
-	int i;
-
-	private = _process_private_open(device);
 
 	/*
-	 * If we get error and error is -EEXIST that means previous process
-	 * private destroy is triggered but didn't complete. Retry creating
-	 * process private after sometime to allow previous destroy to complete.
+	 * Flush mem_workqueue to make sure that any lingering
+	 * structs (process pagetable etc) are released before
+	 * starting over again.
 	 */
-	for (i = 0; (PTR_ERR_OR_ZERO(private) == -EEXIST) && (i < 100); i++) {
-		usleep_range(10, 100);
-		private = _process_private_open(device);
-	}
-	if (i >= 100) {
-		pr_info("kgsl: kgsl_process_private_open times = %d\n", i);
-	}
+	flush_workqueue(kgsl_driver.mem_workqueue);
 
+	mutex_lock(&kgsl_driver.process_mutex);
+	private = kgsl_process_private_new(device);
+
+	if (IS_ERR(private))
+		goto done;
+
+	private->fd_count++;
+
+done:
+	mutex_unlock(&kgsl_driver.process_mutex);
 	return private;
 }
 
@@ -2694,15 +2677,6 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 }
 
 #ifdef CONFIG_DMA_SHARED_BUFFER
-static int match_file(const void *p, struct file *file, unsigned int fd)
-{
-	/*
-	 * We must return fd + 1 because iterate_fd stops searching on
-	 * non-zero return, but 0 is a valid fd.
-	 */
-	return (p == file) ? (fd + 1) : 0;
-}
-
 static void _setup_cache_mode(struct kgsl_mem_entry *entry,
 		struct vm_area_struct *vma)
 {
@@ -2740,8 +2714,6 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 	vma = find_vma(current->mm, hostptr);
 
 	if (vma && vma->vm_file) {
-		int fd;
-
 		ret = check_vma_flags(vma, entry->memdesc.flags);
 		if (ret) {
 			up_read(&current->mm->mmap_sem);
@@ -2757,27 +2729,13 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 			return -EFAULT;
 		}
 
-		/* Look for the fd that matches this vma file */
-		fd = iterate_fd(current->files, 0, match_file, vma->vm_file);
-		if (fd) {
-			dmabuf = dma_buf_get(fd - 1);
-			if (IS_ERR(dmabuf)) {
-				up_read(&current->mm->mmap_sem);
-				return PTR_ERR(dmabuf);
-			}
-			/*
-			 * It is possible that the fd obtained from iterate_fd
-			 * was closed before passing the fd to dma_buf_get().
-			 * Hence dmabuf returned by dma_buf_get() could be
-			 * different from vma->vm_file->private_data. Return
-			 * failure if this happens.
-			 */
-			if (dmabuf != vma->vm_file->private_data) {
-				dma_buf_put(dmabuf);
-				up_read(&current->mm->mmap_sem);
-				return -EBADF;
-			}
-		}
+		/*
+		 * Take a refcount because dma_buf_put() decrements the
+		 * refcount
+		 */
+		get_file(vma->vm_file);
+
+		dmabuf = vma->vm_file->private_data;
 	}
 
 	if (IS_ERR_OR_NULL(dmabuf)) {
@@ -5383,9 +5341,9 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	dma_set_max_seg_size(device->dev, KGSL_DMA_BIT_MASK);
 
 	/* Initialize the memory pools */
-	kgsl_init_page_pools(device);
+	kgsl_init_page_pools(device->pdev);
 
-	status = kgsl_reclaim_init(device);
+	status = kgsl_reclaim_init();
 	if (status)
 		goto error_close_mmu;
 
@@ -5518,7 +5476,7 @@ static void kgsl_core_exit(void)
 static int __init kgsl_core_init(void)
 {
 	int result = 0;
-	struct sched_param param = { .sched_priority = 2 };
+	struct sched_param param = { .sched_priority = 16 };
 
 	/* alloc major and minor device numbers */
 	result = alloc_chrdev_region(&kgsl_driver.major, 0,

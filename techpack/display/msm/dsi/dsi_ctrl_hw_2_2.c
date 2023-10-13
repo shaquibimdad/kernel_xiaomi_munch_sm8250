@@ -19,10 +19,6 @@
 #define MDP_INTF_TEAR_LINE_COUNT_OFFSET 0x30
 #define MDP_INTF_LINE_COUNT_OFFSET 0xB0
 
-/* MDP INTF registers to be mapped*/
-#define MDP_INTF1_TEAR_LINE_COUNT 0xAE6BAB0
-#define MDP_INTF1_LINE_COUNT 0xAE6B8B0
-
 /**
  * dsi_ctrl_hw_22_phy_reset_config() - to configure clamp control during ulps
  * @ctrl:          Pointer to the controller host hardware.
@@ -139,45 +135,8 @@ void dsi_ctrl_hw_22_config_clk_gating(struct dsi_ctrl_hw *ctrl, bool enable,
 }
 
 /**
- * dsi_ctrl_hw_22_map_mdp_regs() - maps MDP interface line count registers.
- * @pdev:		Pointer to platform device.
- * @ctrl:		Pointer to the controller host hardware.
- *
- * Return: 0 on success and error on failure.
- */
-int dsi_ctrl_hw_22_map_mdp_regs(struct platform_device *pdev,
-			struct dsi_ctrl_hw *ctrl)
-{
-	int rc = 0;
-	void __iomem *ptr = NULL, *ptr1 = NULL;
-
-	if (ctrl->index == 0) {
-		ptr = devm_ioremap(&pdev->dev, MDP_INTF1_TEAR_LINE_COUNT, 1);
-		if (IS_ERR_OR_NULL(ptr)) {
-			DSI_CTRL_HW_ERR(ctrl,
-				"MDP TE LINE COUNT address not found\n");
-			rc = PTR_ERR(ptr);
-			return rc;
-		}
-
-		ptr1 = devm_ioremap(&pdev->dev, MDP_INTF1_LINE_COUNT, 1);
-		if (IS_ERR_OR_NULL(ptr1)) {
-			DSI_CTRL_HW_ERR(ctrl,
-				"MDP TE LINE COUNT address not found\n");
-			rc = PTR_ERR(ptr1);
-			return rc;
-		}
-	}
-
-	ctrl->te_rd_ptr_reg = ptr;
-	ctrl->line_count_reg = ptr1;
-
-	return rc;
-}
-
-/**
  * dsi_ctrl_hw_22_log_line_count() - reads the MDP interface line count
- *					registers.
+ *				     registers.
  * @ctrl:	Pointer to the controller host hardware.
  * @cmd_mode:	Boolean to indicate command mode operation.
  *
@@ -197,16 +156,15 @@ u32 dsi_ctrl_hw_22_log_line_count(struct dsi_ctrl_hw *ctrl, bool cmd_mode)
 	else
 		reg = readl_relaxed(ctrl->mdp_intf_base
 					+ MDP_INTF_LINE_COUNT_OFFSET);
-
 	return reg;
 }
 
-/**
+/*
  * dsi_ctrl_hw_22_configure_cmddma_window() - configure DMA window for CMD TX
- * @ctrl:       Pointer to the controller host hardware.
- * @cmd:        Pointer to the DSI DMA command info.
- * @line_no:    Line number at which the CMD needs to be triggered.
- * @window:     Width of the DMA CMD window.
+ * @ctrl:	Pointer to the controller host hardware.
+ * @cmd:	Pointer to the DSI DMA command info.
+ * @line_no:	Line number at which the CMD needs to be triggered.
+ * @window:	Width of the DMA CMD window.
  */
 void dsi_ctrl_hw_22_configure_cmddma_window(struct dsi_ctrl_hw *ctrl,
 		struct dsi_ctrl_cmd_dma_info *cmd,
@@ -251,12 +209,12 @@ void dsi_ctrl_hw_22_configure_cmddma_window(struct dsi_ctrl_hw *ctrl,
 
 /**
  * dsi_ctrl_hw_22_reset_trigger_controls() - reset dsi trigger configurations
- * @ctrl:		Pointer to the controller host hardware.
- * @cfg:		DSI host configuration that is common to both video and
- *			command modes.
+ * @ctrl:             Pointer to the controller host hardware.
+ * @cfg:              DSI host configuration that is common to both video and
+ *                    command modes.
  */
 void dsi_ctrl_hw_22_reset_trigger_controls(struct dsi_ctrl_hw *ctrl,
-					struct dsi_host_common_cfg *cfg)
+				       struct dsi_host_common_cfg *cfg)
 {
 	u32 reg = 0;
 	const u8 trigger_map[DSI_TRIGGER_MAX] = {

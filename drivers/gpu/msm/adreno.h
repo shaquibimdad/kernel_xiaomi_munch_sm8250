@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __ADRENO_H
 #define __ADRENO_H
@@ -15,6 +15,9 @@
 
 #define DEVICE_3D_NAME "kgsl-3d"
 #define DEVICE_3D0_NAME "kgsl-3d0"
+
+/* Index to preemption scratch buffer to store KMD postamble */
+#define KMD_POSTAMBLE_IDX 100
 
 /* ADRENO_DEVICE - Given a kgsl_device return the adreno device struct */
 #define ADRENO_DEVICE(device) \
@@ -110,20 +113,6 @@
 #define ADRENO_DEPRECATED BIT(20)
 /* The target supports ringbuffer level APRIV */
 #define ADRENO_APRIV BIT(21)
-/*
- * Use SHMEM for page allocation. There will be no support
- * for pools and higher order pages.
- */
-#define ADRENO_USE_SHMEM BIT(22)
-/*
- * Make pages available for reclaim. Process foreground/background
- * activity is known through sysfs exposed per process. Based on
- * this, pages are unpinned and made available to Per Process
- * Reclaim (PPR). SHMEM is used for allocation of pages and
- * support for pools is removed.
- */
-#define ADRENO_PROCESS_RECLAIM BIT(23)
-
 /*
  * Adreno GPU quirks - control bits for various workarounds
  */
@@ -806,6 +795,7 @@ struct adreno_coresight_attr {
 	struct adreno_coresight_register *reg;
 };
 
+#if IS_ENABLED(CONFIG_CORESIGHT_ADRENO)
 ssize_t adreno_coresight_show_register(struct device *device,
 		struct device_attribute *attr, char *buf);
 
@@ -818,6 +808,12 @@ ssize_t adreno_coresight_store_register(struct device *dev,
 		adreno_coresight_show_register, \
 		adreno_coresight_store_register), \
 		(_reg), }
+#else
+#define ADRENO_CORESIGHT_ATTR(_attrname, _reg) \
+	struct adreno_coresight_attr coresight_attr_##_attrname  = { \
+		__ATTR_NULL, \
+		(_reg), }
+#endif /* CONFIG_CORESIGHT_ADRENO */
 
 /**
  * struct adreno_coresight - GPU specific coresight definition
@@ -1050,8 +1046,6 @@ extern unsigned int *adreno_ft_regs;
 extern unsigned int adreno_ft_regs_num;
 extern unsigned int *adreno_ft_regs_val;
 
-extern struct adreno_gpudev adreno_a3xx_gpudev;
-extern struct adreno_gpudev adreno_a5xx_gpudev;
 extern struct adreno_gpudev adreno_a6xx_gpudev;
 
 extern int adreno_wake_nice;
@@ -1066,8 +1060,6 @@ long adreno_ioctl_helper(struct kgsl_device_private *dev_priv,
 		unsigned int cmd, unsigned long arg,
 		const struct kgsl_ioctl *cmds, int len);
 
-int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
-		struct adreno_ringbuffer *rb);
 int adreno_set_unsecured_mode(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb);
 void adreno_spin_idle_debug(struct adreno_device *adreno_dev, const char *str);
@@ -1089,12 +1081,22 @@ void adreno_fault_skipcmd_detached(struct adreno_device *adreno_dev,
 					 struct adreno_context *drawctxt,
 					 struct kgsl_drawobj *drawobj);
 
+#if IS_ENABLED(CONFIG_CORESIGHT_ADRENO)
 int adreno_coresight_init(struct adreno_device *adreno_dev);
 
 void adreno_coresight_start(struct adreno_device *adreno_dev);
 void adreno_coresight_stop(struct adreno_device *adreno_dev);
 
 void adreno_coresight_remove(struct adreno_device *adreno_dev);
+#else
+static inline int adreno_coresight_init(struct adreno_device *adreno_dev)
+{
+	return -ENODEV;
+}
+static inline void adreno_coresight_start(struct adreno_device *adreno_dev) { }
+static inline void adreno_coresight_stop(struct adreno_device *adreno_dev) { }
+static inline void adreno_coresight_remove(struct adreno_device *adreno_dev) { }
+#endif /* CONFIG_CORESIGHT_ADRENO */
 
 bool adreno_hw_isidle(struct adreno_device *adreno_dev);
 

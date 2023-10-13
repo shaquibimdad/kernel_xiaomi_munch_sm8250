@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021 XiaoMi, Inc.
  */
 
 #ifndef _SDE_CONNECTOR_H_
@@ -394,8 +395,8 @@ enum mi_dimlayer_type {
 	MI_DIMLAYER_FOD_HBM_OVERLAY = 0x1,
 	MI_DIMLAYER_FOD_ICON = 0x2,
 	MI_DIMLAYER_AOD = 0x4,
-	MI_LAYER_FOD_ANIM = 0x8,
-	MI_FOD_UNLOCK_SUCCESS = 0x10,
+	MI_FOD_UNLOCK_SUCCESS = 0x8,
+	MI_LAYER_FOD_ANIM = 0x10,
 	MI_DIMLAYER_MAX,
 };
 
@@ -449,6 +450,7 @@ struct mi_dimlayer_state
  * last_cmd_tx_sts: status of the last command transfer
  * @hdr_capable: external hdr support present
  * @core_clk_rate: MDP core clk rate used for dynamic HDR packet calculation
+ * @mi_dimlayer_state: mi dimlayer state
  */
 struct sde_connector {
 	struct drm_connector base;
@@ -990,7 +992,6 @@ int sde_connector_get_panel_vfp(struct drm_connector *connector,
  * @connector: Pointer to DRM connector object
  */
 int sde_connector_esd_status(struct drm_connector *connector);
-
 /**
  * sde_connector_hbm_ctl - mi function to control hbm
  * @connector: Pointer to DRM connector object
