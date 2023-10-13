@@ -1,6 +1,5 @@
 /*
  * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -3832,6 +3831,24 @@ bool policy_mgr_is_sta_sap_scc_allowed_on_dfs_chan(
 					       &sta_sap_scc_on_dfs_chnl);
 	if (policy_mgr_is_force_scc(psoc) && sta_sap_scc_on_dfs_chnl)
 		status = true;
+
+	return status;
+}
+
+bool policy_mgr_is_sap_only_allow_sta_dfs_indoor_chan(
+		struct wlan_objmgr_psoc *psoc)
+{
+	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	bool status = true;
+
+	pm_ctx = policy_mgr_get_context(psoc);
+	if (!pm_ctx) {
+		policy_mgr_err("Invalid Context");
+		return status;
+	}
+
+	if (!pm_ctx->cfg.sap_only_allow_sta_dfs_indoor_chan)
+		status = false;
 
 	return status;
 }

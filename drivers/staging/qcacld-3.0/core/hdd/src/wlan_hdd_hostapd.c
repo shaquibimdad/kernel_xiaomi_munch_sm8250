@@ -1366,10 +1366,6 @@ static int calcuate_max_phy_rate(int mode, int nss, int ch_width,
 	if (mode == SIR_SME_PHY_MODE_HT) {
 		/* check for HT Mode */
 		maxidx = ht_mcs_idx;
-		if (maxidx > 7) {
-			hdd_err("ht_mcs_idx %d is incorrect", ht_mcs_idx);
-			return maxrate;
-		}
 		if (nss == 1) {
 			supported_mcs_rate = supported_mcs_rate_nss1;
 		} else if (nss == 2) {
@@ -6517,6 +6513,7 @@ static int __wlan_hdd_cfg80211_start_ap(struct wiphy *wiphy,
 	/* if sta_sap_scc_on_dfs_chan ini is set, DFS master capability is
 	 * assumed disabled in the driver.
 	 */
+
 	if ((wlan_reg_get_channel_state(hdd_ctx->pdev, channel) ==
 	     CHANNEL_STATE_DFS) && !sta_cnt && sta_sap_scc_on_dfs_chan &&
 	     !ucfg_policy_mgr_get_dfs_master_dynamic_enabled(
