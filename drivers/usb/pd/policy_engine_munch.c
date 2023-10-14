@@ -22,7 +22,6 @@
 #include <linux/usb/usbpd.h>
 #include <linux/pmic-voter.h>
 #include "usbpd.h"
-#include "ps5169.h"
 
 enum usbpd_state {
 	PE_UNKNOWN,
@@ -169,6 +168,13 @@ static const char * const usbpd_ext_msg_strings[] = {
 	"Firmware_Update_Response", "PPS_Status", "Country_Info",
 	"Country_Codes",
 };
+
+#undef dev_dbg
+#define dev_dbg dev_err
+#undef pr_debug
+#define pr_debug pr_err
+#undef pr_info
+#define pr_info pr_err
 
 static inline const char *msg_to_string(u8 id, bool is_data, bool is_ext)
 {
@@ -361,7 +367,7 @@ module_param(min_sink_current, int, 0600);
 #if defined (CONFIG_IDT_P9415) || defined (CONFIG_RX1619)
 static const u32 default_src_caps[] = { 0x36019032 };	/* VSafe5V @ 0.5A */
 #else
-static const u32 default_src_caps[] = { 0x36019096 };	/* VSafe5V @ 1.5A */
+static const u32 default_src_caps[] = { 0x36019096 };   /* VSafe5V @ 1.5A */
 #endif
 static const u32 default_snk_caps[] = { 0x2601912C };	/* VSafe5V @ 3A */
 
@@ -429,7 +435,6 @@ struct usbpd {
 	struct power_supply	*bms_psy;
 	struct power_supply	*wireless_psy;
 	struct power_supply	*cp_psy;
-	struct power_supply	*ps_psy;
 	struct notifier_block	psy_nb;
 
 	bool			batt_2s;
@@ -504,7 +509,6 @@ struct usbpd {
 	int                     last_uv;
 	int                     last_ua;
 	int			apdo_max;
-	int			power_max;
 	u64			monitor_entry_time;
 
 	/* non-qcom pps control */
@@ -527,7 +531,6 @@ struct usbpd {
 	u8			get_battery_status_db;
 	bool			send_get_battery_status;
 	u32			battery_sts_dobj;
-	bool			typec_analog_audio_connected;
 	bool			request_reject;
 };
 
@@ -552,7 +555,6 @@ static void handle_state_snk_wait_for_capabilities(struct usbpd *pd,
 static void handle_state_prs_snk_src_source_on(struct usbpd *pd,
 	struct rx_msg *rx_msg);
 static void reset_vdm_state(struct usbpd *pd);
-
 static const struct usbpd_state_handler state_handlers[];
 
 enum plug_orientation usbpd_get_plug_orientation(struct usbpd *pd)
@@ -593,19 +595,7 @@ static inline void start_usb_host(struct usbpd *pd, bool ss)
 {
 	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
 	union extcon_property_value val;
-	union power_supply_propval pval;
 	int ret = 0;
-
-	if (pd->ps_psy) {
-		if (cc == ORIENTATION_CC1)
-			pval.intval = 1;
-		else if (cc == ORIENTATION_CC2)
-			pval.intval = 2;
-		else
-			pval.intval = 0;
-		power_supply_set_property(pd->ps_psy,
-				POWER_SUPPLY_PROP_PS_CFG_FLIP, &pval);
-	}
 
 	val.intval = (cc == ORIENTATION_CC2);
 	extcon_set_property(pd->extcon, EXTCON_USB_HOST,
@@ -634,18 +624,6 @@ static inline void start_usb_peripheral(struct usbpd *pd)
 {
 	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
 	union extcon_property_value val;
-	union power_supply_propval pval;
-
-	if (pd->ps_psy) {
-		if (cc == ORIENTATION_CC1)
-			pval.intval = 1;
-		else if (cc == ORIENTATION_CC2)
-			pval.intval = 2;
-		else
-			pval.intval = 0;
-		power_supply_set_property(pd->ps_psy,
-				POWER_SUPPLY_PROP_PS_CFG_FLIP, &pval);
-	}
 
 	val.intval = (cc == ORIENTATION_CC2);
 	extcon_set_property(pd->extcon, EXTCON_USB,
@@ -713,8 +691,6 @@ static int usbpd_release_ss_lane(struct usbpd *pd,
 				struct usbpd_svid_handler *hdlr)
 {
 	int ret = 0;
-	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
-	union power_supply_propval pval;
 
 	if (!hdlr || !pd)
 		return -EINVAL;
@@ -744,17 +720,6 @@ static int usbpd_release_ss_lane(struct usbpd *pd,
 		start_usb_host(pd, false);
 
 	pd->ss_lane_svid = hdlr->svid;
-
-	if (pd->ps_psy) {
-		if (cc == ORIENTATION_CC1)
-			pval.intval = 1;
-		else if (cc == ORIENTATION_CC2)
-			pval.intval = 2;
-		else
-			pval.intval = 0;
-		power_supply_set_property(pd->ps_psy,
-				POWER_SUPPLY_PROP_PS_CFG_DP, &pval);
-	}
 
 	/* DP 4 Lane mode  */
 	ret = extcon_blocking_sync(pd->extcon, EXTCON_DISP_DP, 4);
@@ -819,7 +784,6 @@ static inline void pd_reset_protocol(struct usbpd *pd)
 	memset(pd->rx_msgid, -1, sizeof(pd->rx_msgid));
 	memset(pd->tx_msgid, 0, sizeof(pd->tx_msgid));
 	pd->send_request = false;
-	pd->send_get_status = false;
 	pd->send_pr_swap = false;
 	pd->send_dr_swap = false;
 }
@@ -852,8 +816,6 @@ static int pd_send_msg(struct usbpd *pd, u8 msg_type, const u32 *data,
 	}
 	spin_unlock_irqrestore(&pd->rx_lock, flags);
 
-	usbpd_dbg(&pd->dev, "send msg %s\n",
-			msg_to_string(msg_type, num_data, false));
 	ret = pd_phy_write(hdr, (u8 *)data, num_data * sizeof(u32), sop);
 	if (ret) {
 		if (pd->pd_connected)
@@ -900,6 +862,7 @@ static int pd_send_ext_msg(struct usbpd *pd, u8 msg_type,
 				pd->tx_msgid[sop], num_objs, pd->spec_rev) |
 			PD_MSG_HDR_EXTENDED;
 		pd->tx_msgid[sop] = (pd->tx_msgid[sop] + 1) & PD_MAX_MSG_ID;
+		usbpd_info(&pd->dev, "send ext msg pd->tx_msgid[sop]:%d,hdr:%x\n", pd->tx_msgid[sop], hdr);
 		ret = pd_phy_write(hdr, chunked_payload,
 				num_objs * sizeof(u32), sop);
 		if (ret) {
@@ -967,6 +930,7 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 			return -EINVAL;
 		}
 
+
 		curr = ua / 1000;
 
 		/*
@@ -990,12 +954,6 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 
 	pd->requested_current = curr;
 	pd->requested_pdo = pdo_pos;
-
-#ifdef CONFIG_MACH_XIAOMI_DAGU
-	if ((pd->requested_pdo == 1) && (pd->requested_current > 2500)) {
-		pd->requested_current = 2500;
-	}
-#endif
 
 	return 0;
 }
@@ -1102,19 +1060,11 @@ static int pd_eval_src_caps(struct usbpd *pd)
 
 	/* Select the first PDO (vSafe5V) immediately. */
 	/* Select thr first PDO for zimi adapter*/
-#ifndef CONFIG_MACH_XIAOMI_MUNCH
-	if (pd->batt_2s && pd->adapter_id == 0xA819)
-		pd_select_pdo(pd, 2, 0, 0);
-	else if (pd->request_reject == 1) {
-#ifndef CONFIG_MACH_XIAOMI_DAGU
-		if (pd->rdo == 0) {
-			usbpd_err(&pd->dev, "Invalid rdo, first pdo %08x\n", first_pdo);
-			pd_select_pdo(pd, 1, 0, 0);
-		}
-		usbpd_err(&pd->dev, "request reject setted!\n");
-#endif
-	} else
-#endif
+	//if (pd->batt_2s && pd->adapter_id == 0xA819)
+		//pd_select_pdo(pd, 2, 0, 0);
+//	else if (pd->request_reject == 1)
+	//	;
+	//else
 		pd_select_pdo(pd, 1, 0, 0);
 
 	return 0;
@@ -1131,7 +1081,6 @@ static void pd_send_hard_reset(struct usbpd *pd)
 	pd_phy_signal(HARD_RESET_SIG);
 	pd->in_pr_swap = false;
 	pd->pd_connected = false;
-	pd->request_reject = false;
 	reset_vdm_state(pd);
 	power_supply_set_property(pd->usb_psy, POWER_SUPPLY_PROP_PR_SWAP, &val);
 }
@@ -1145,7 +1094,6 @@ static void kick_sm(struct usbpd *pd, int ms)
 		usbpd_dbg(&pd->dev, "delay %d ms", ms);
 		hrtimer_start(&pd->timer, ms_to_ktime(ms), HRTIMER_MODE_REL);
 	} else {
-		usbpd_dbg(&pd->dev, "queue state work\n");
 		queue_work(pd->wq, &pd->sm_work);
 	}
 }
@@ -1345,6 +1293,13 @@ static void phy_msg_received(struct usbpd *pd, enum pd_sop_type sop,
 		return;
 	}
 
+	msg_type = PD_MSG_HDR_TYPE(header);
+	num_objs = PD_MSG_HDR_COUNT(header);
+	usbpd_dbg(&pd->dev, "%s type(%d) num_objs(%d)\n",
+				msg_to_string(msg_type, num_objs,
+				PD_MSG_HDR_IS_EXTENDED(header)),
+				msg_type, num_objs);
+
 	/* if MSGID already seen, discard */
 	if (PD_MSG_HDR_ID(header) == pd->rx_msgid[sop] &&
 			PD_MSG_HDR_TYPE(header) != MSG_SOFT_RESET) {
@@ -1369,12 +1324,12 @@ static void phy_msg_received(struct usbpd *pd, enum pd_sop_type sop,
 	if (PD_MSG_HDR_REV(header) < pd->spec_rev)
 		pd->spec_rev = PD_MSG_HDR_REV(header);
 
-	msg_type = PD_MSG_HDR_TYPE(header);
+	/*msg_type = PD_MSG_HDR_TYPE(header);
 	num_objs = PD_MSG_HDR_COUNT(header);
 	usbpd_dbg(&pd->dev, "%s type(%d) num_objs(%d)\n",
 			msg_to_string(msg_type, num_objs,
 				PD_MSG_HDR_IS_EXTENDED(header)),
-			msg_type, num_objs);
+			msg_type, num_objs);*/
 
 	if (!PD_MSG_HDR_IS_EXTENDED(header)) {
 		rx_msg = kzalloc(sizeof(*rx_msg) + len, GFP_ATOMIC);
@@ -1656,6 +1611,7 @@ static void handle_vdm_resp_ack(struct usbpd *pd, u32 *vdos, u8 num_vdos,
 		if (num_vdos != 0) {
 			for (i = 0; i < num_vdos; i++) {
 				pd->adapter_id = vdos[i] & 0xFFFF;
+				usbpd_dbg(&pd->dev, "pd->adapter_id:0x%x\n", pd->adapter_id);
 			}
 		}
 
@@ -1718,8 +1674,8 @@ static void handle_vdm_resp_ack(struct usbpd *pd, u32 *vdos, u8 num_vdos,
 			 * non-zero. Just skip over the zero ones.
 			 */
 			if (svid) {
-				usbpd_dbg(&pd->dev, "Discovered SVID: 0x%04x\n",
-						svid);
+				usbpd_info(&pd->dev, "Discovered SVID: 0x%04x\n",
+							svid);
 				pd->adapter_svid = svid;
 				*psvid++ = svid;
 			}
@@ -1757,15 +1713,11 @@ static void handle_vdm_resp_ack(struct usbpd *pd, u32 *vdos, u8 num_vdos,
 	}
 
 }
-
-bool has_dp_flag = false;
 static void handle_vdm_rx(struct usbpd *pd, struct rx_msg *rx_msg)
 {
 	int ret;
 	u32 vdm_hdr =
 	rx_msg->data_len >= sizeof(u32) ? ((u32 *)rx_msg->payload)[0] : 0;
-	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
-	union power_supply_propval pval;
 
 	u32 *vdos = (u32 *)&rx_msg->payload[sizeof(u32)];
 	u16 svid = VDM_HDR_SVID(vdm_hdr);
@@ -1783,24 +1735,6 @@ static void handle_vdm_rx(struct usbpd *pd, struct rx_msg *rx_msg)
 
 	if ((svid == 0xFF01) && (!pd->has_dp)) {
 		pd->has_dp = true;
-		has_dp_flag = true;
-
-		if (pd->usb_psy) {
-			pval.intval = pd->has_dp;
-			power_supply_set_property(pd->usb_psy,
-					POWER_SUPPLY_PROP_HAS_DP, &pval);
-		}
-
-		if (pd->ps_psy) {
-			if (cc == ORIENTATION_CC1)
-				pval.intval = 1;
-			else if (cc == ORIENTATION_CC2)
-				pval.intval = 2;
-			else
-				pval.intval = 0;
-			power_supply_set_property(pd->ps_psy,
-					POWER_SUPPLY_PROP_PS_CFG_USB_DP, &pval);
-		}
 
 		/* Set to USB and DP cocurrency mode */
 		extcon_blocking_sync(pd->extcon, EXTCON_DISP_DP, 2);
@@ -1929,7 +1863,6 @@ static void handle_vdm_tx(struct usbpd *pd, enum pd_sop_type sop_type)
 	 * PD 3.0: For initiated SVDMs, source must first ensure Rp is set
 	 * to SinkTxNG to indicate the start of an AMS
 	 */
-#ifndef CONFIG_MACH_XIAOMI_DAGU
 	if (VDM_IS_SVDM(vdm_hdr) &&
 		SVDM_HDR_CMD_TYPE(vdm_hdr) == SVDM_CMD_TYPE_INITIATOR &&
 		pd->current_pr == PR_SRC && !in_src_ams(pd)) {
@@ -1938,7 +1871,6 @@ static void handle_vdm_tx(struct usbpd *pd, enum pd_sop_type sop_type)
 		mutex_unlock(&pd->svid_handler_lock);
 		return;
 	}
-#endif
 
 	ret = pd_send_msg(pd, MSG_VDM, pd->vdm_tx->data,
 			pd->vdm_tx->size, sop_type);
@@ -2651,7 +2583,6 @@ static void enter_state_src_ready(struct usbpd *pd)
 static void handle_state_src_ready(struct usbpd *pd, struct rx_msg *rx_msg)
 {
 	int ret;
-
 	if (IS_CTRL(rx_msg, MSG_GET_SOURCE_CAP)) {
 		pd->current_state = PE_SRC_SEND_CAPABILITIES;
 		kick_sm(pd, 0);
@@ -2751,8 +2682,6 @@ static void enter_state_hard_reset(struct usbpd *pd)
 	/* are we still connected? */
 	if (pd->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
 		pd->current_pr = PR_NONE;
-		/* Reset hard reset count */
-		pd->hard_reset_count = 0;
 		kick_sm(pd, 0);
 		return;
 	}
@@ -2806,6 +2735,7 @@ static void handle_state_soft_reset(struct usbpd *pd,
 			PE_SRC_SEND_CAPABILITIES :
 			PE_SNK_WAIT_FOR_CAPABILITIES);
 	pd->request_reject = 1;
+	usbpd_err(&pd->dev, "set request_reject as 1\n");
 }
 
 static void handle_state_src_transition_to_default(struct usbpd *pd,
@@ -2949,10 +2879,6 @@ static void handle_state_snk_wait_for_capabilities(struct usbpd *pd,
 		memcpy(&pd->received_pdos, rx_msg->payload,
 				min_t(size_t, rx_msg->data_len,
 					sizeof(pd->received_pdos)));
-#ifndef CONFIG_MACH_XIAOMI_MUNCH
-		if (pd->request_reject)
-			pd->request_reject = false;
-#endif
 		pd->src_cap_id++;
 
 		usbpd_set_state(pd, PE_SNK_EVALUATE_CAPABILITY);
@@ -3414,7 +3340,6 @@ static void handle_state_snk_ready(struct usbpd *pd, struct rx_msg *rx_msg)
 			usbpd_set_state(pd, PE_SEND_SOFT_RESET);
 		return;
 	}
-
 	if (is_sink_tx_ok(pd))
 		handle_snk_ready_tx(pd, rx_msg);
 	else
@@ -3721,7 +3646,6 @@ static const struct usbpd_state_handler state_handlers[] = {
 static void handle_disconnect(struct usbpd *pd)
 {
 	union power_supply_propval val = {0};
-	union power_supply_propval pval;
 
 	if (pd->vconn_enabled) {
 		regulator_disable(pd->vconn);
@@ -3828,16 +3752,9 @@ static void handle_disconnect(struct usbpd *pd)
 
 	if (pd->has_dp) {
 		pd->has_dp = false;
-		has_dp_flag = false;
 
 		/* Set to USB only mode when cable disconnected */
 		extcon_blocking_sync(pd->extcon, EXTCON_DISP_DP, 0);
-
-		if (pd->usb_psy) {
-			pval.intval = pd->has_dp;
-			power_supply_set_property(pd->usb_psy,
-					POWER_SUPPLY_PROP_HAS_DP, &pval);
-		}
 	}
 }
 
@@ -3890,25 +3807,10 @@ static void usbpd_sm(struct work_struct *w)
 	int ret;
 	struct rx_msg *rx_msg = NULL;
 	unsigned long flags;
-
 	/*
-	usbpd_dbg(&pd->dev, "handle state %s\n",
+	usbpd_err(&pd->dev, "typec mode:%d, pr:%d, handle state %s\n",
+			pd->typec_mode, pd->current_pr,
 			usbpd_state_strings[pd->current_state]);
-	*/
-
-	/* Register typec partner in case AAA is connected */
-	/*
-	if (pd->typec_mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) {
-		if (!pd->partner) {
-			memset(&pd->partner_identity, 0,
-					sizeof(pd->partner_identity));
-			pd->partner_desc.usb_pd = false;
-			pd->partner_desc.accessory = TYPEC_ACCESSORY_AUDIO;
-			pd->partner = typec_register_partner(pd->typec_port,
-							&pd->partner_desc);
-			pd->typec_analog_audio_connected = true;
-		}
-	}
 	*/
 	hrtimer_cancel(&pd->timer);
 	pd->sm_queued = false;
@@ -3923,18 +3825,9 @@ static void usbpd_sm(struct work_struct *w)
 	/* Disconnect? */
 	if (pd->current_pr == PR_NONE) {
 		if (pd->current_state == PE_UNKNOWN &&
-				pd->current_dr == DR_NONE) {
-			/*
-			 * Since PD stack will not be loaded in case AAA is
-			 * connected, call disconnect to unregister typec
-			 * partner
-			 */
-			if (!pd->typec_analog_audio_connected &&
-					pd->partner)
-				handle_disconnect(pd);
-
+				pd->current_dr == DR_NONE)
 			goto sm_done;
-		}
+
 		handle_disconnect(pd);
 		goto sm_done;
 	}
@@ -3969,13 +3862,8 @@ sm_done:
 	spin_unlock_irqrestore(&pd->rx_lock, flags);
 
 	/* requeue if there are any new/pending RX messages */
-	if (!ret &&
-		((!IS_ENABLED(CONFIG_MACH_XIAOMI_MUNCH) &&
-		  !IS_ENABLED(CONFIG_MACH_XIAOMI_DAGU)) || !pd->sm_queued)
-	) {
-		usbpd_dbg(&pd->dev, "Requeuing new/pending RX messages\n");
+	if (!ret && !pd->sm_queued)
 		kick_sm(pd, 0);
-	}
 
 	if (!pd->sm_queued)
 		pm_relax(&pd->dev);
@@ -4009,7 +3897,6 @@ static int usbpd_process_typec_mode(struct usbpd *pd,
 		}
 
 		pd->current_pr = PR_NONE;
-		pd->typec_analog_audio_connected = false;
 		break;
 
 	/* Sink states */
@@ -4127,7 +4014,7 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 		if (val.intval == POWER_SUPPLY_TYPE_USB ||
 			val.intval == POWER_SUPPLY_TYPE_USB_CDP ||
 			val.intval == POWER_SUPPLY_TYPE_USB_FLOAT) {
-			usbpd_dbg(&pd->dev, "typec mode:%d type:%d\n",
+			usbpd_err(&pd->dev, "typec mode:%d type:%d\n",
 				typec_mode, val.intval);
 			pd->typec_mode = typec_mode;
 			queue_work(pd->wq, &pd->start_periph_work);
@@ -4153,7 +4040,7 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	if (typec_mode && ((!pd->vbus_present &&
 			pd->current_state == PE_SNK_TRANSITION_TO_DEFAULT) ||
 		(pd->vbus_present && pd->current_state == PE_SNK_DISCOVERY))) {
-		usbpd_dbg(&pd->dev, "hard reset: typec mode:%d present:%d\n",
+		usbpd_info(&pd->dev, "hard reset: typec mode:%d present:%d\n",
 			typec_mode, pd->vbus_present);
 		pd->typec_mode = typec_mode;
 
@@ -4169,7 +4056,7 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 		return 0;
 
 
-	usbpd_dbg(&pd->dev, "typec mode:%d present:%d orientation:%d\n",
+	usbpd_info(&pd->dev, "typec mode:%d present:%d orientation:%d\n",
 			typec_mode, pd->vbus_present,
 			usbpd_get_plug_orientation(pd));
 
@@ -4620,6 +4507,7 @@ static ssize_t select_pdo_store(struct device *dev,
 		ua = USBPD_WAKK_PPS_CURR_LIMIT;
 	}
 
+	usbpd_info(&pd->dev, "pdo:%d, uv:%d, ua:%d\n", pdo, uv, ua);
 	ret = pd_select_pdo(pd, pdo, uv, ua);
 	if (ret)
 		goto out;
@@ -4933,7 +4821,6 @@ static ssize_t usbpd_verifed_store(struct device *dev,
 
 	pd->verifed = val;
 	pd->verify_done = true;
-
 	if (pd->pps_insert || pd->verifed) {
 		ret = pd_send_msg(pd, MSG_GET_SOURCE_CAP, NULL, 0, SOP_MSG);
 		if (ret) {
@@ -4942,8 +4829,7 @@ static ssize_t usbpd_verifed_store(struct device *dev,
 		}
 	}
 
-	if (!pd->verifed && !pd->pps_found && !pd->fix_pdo_5v
-			&& (!IS_ENABLED(CONFIG_MACH_XIAOMI_DAGU) || !pd->has_dp))
+	if (!pd->verifed && !pd->pps_found && !pd->fix_pdo_5v)
 		schedule_delayed_work(&pd->fixed_pdo_work, 5 * HZ);
 
 	return size;
@@ -5611,12 +5497,6 @@ static void usbpd_fixed_pdo_workfunc(struct work_struct *w)
 	union power_supply_propval val = {0};
 	int ret;
 
-#ifdef CONFIG_MACH_XIAOMI_DAGU
-	if (pd->has_dp) {
-		return;
-	}
-#endif
-
 	ret = power_supply_get_property(pd->usb_psy,
 			POWER_SUPPLY_PROP_PD_ACTIVE, &val);
 	if (ret)
@@ -5695,9 +5575,8 @@ static void usbpd_pdo_workfunc(struct work_struct *w)
 				if (max_volt >= 20000)
 					pd->is_support_2s = true;
 			}
-			if (pps_max_watts < max_volt * max_curr) {
-				if (!IS_ENABLED(CONFIG_MACH_XIAOMI_DAGU) || max_volt < 20000)
-					pps_max_watts = max_volt * max_curr;
+			if ((PD_APDO_MAX_VOLT(pdo) * 100 <= 11000) && pps_max_watts < max_volt * max_curr) {
+				pps_max_watts = max_volt * max_curr;
 				if(pps_max_watts >120000000 && pps_max_watts < 130000000)
 					pps_max_watts = 120000000;
 				if (pps_max_watts < USBPD_WEAK_PPS_POWER) {
@@ -5712,16 +5591,16 @@ static void usbpd_pdo_workfunc(struct work_struct *w)
 				(PD_SRC_PDO_TYPE(pdo) == PD_SRC_PDO_TYPE_AUGMENTED) ? "PPS" : "PD2.0",
 				max_volt, min_volt, max_curr);
 	}
-
+	//usbpd_err(&pd->dev, "huangrui add pps_max_watts[%d],pd->apdo_max:%d\n", pps_max_watts / 1000  / 1000,pd->apdo_max);
 	if (pd->verifed) {
 		pps_max_mwatt = pps_max_watts / 1000  / 1000;
-		if (pps_max_mwatt != pd->apdo_max) {
-			pd->apdo_max = pps_max_mwatt;
-			val.intval = min(pps_max_mwatt, pd->power_max);
-			power_supply_set_property(pd->usb_psy,
-					POWER_SUPPLY_PROP_APDO_MAX, &val);
-			usbpd_err(&pd->dev, "pps_max_watts[%d]\n", pps_max_mwatt);
-		}
+		//if (pps_max_mwatt != pd->apdo_max) {
+		pd->apdo_max = pps_max_mwatt;
+		val.intval = pps_max_mwatt;
+		power_supply_set_property(pd->usb_psy,
+				POWER_SUPPLY_PROP_APDO_MAX, &val);
+		usbpd_err(&pd->dev, "pps_max_watts[%d]\n", pps_max_mwatt);
+		//}
 	}
 
 	if (pd->batt_2s) {
@@ -5880,9 +5759,6 @@ struct usbpd *usbpd_create(struct device *parent)
 	if (!pd->wireless_psy)
 		pd->wireless_psy = power_supply_get_by_name("wireless");
 
-	pd->ps_psy = power_supply_get_by_name("ps5169");
-	if (!pd->ps_psy)
-		usbpd_err(&pd->dev, "Could not get ps5169 power_supply, skip.\n");
 
 	ret = power_supply_get_property(pd->bat_psy,
 			POWER_SUPPLY_PROP_BATT_2S_MODE, &val);
@@ -5935,10 +5811,6 @@ struct usbpd *usbpd_create(struct device *parent)
 
 	pd->non_qcom_pps_ctr = of_property_read_bool(parent->of_node,
 				"mi,non-qcom-pps-ctrl");
-
-	of_property_read_u32(parent->of_node, "mi,pd-power-max", &pd->power_max);
-	usbpd_info(&pd->dev, "pd-power-max:%d\n", pd->power_max);
-
 	if (pd->num_sink_caps > 0) {
 		int i;
 		u32 sink_caps[14];
@@ -6080,3 +5952,4 @@ module_exit(usbpd_exit);
 
 MODULE_DESCRIPTION("USB Power Delivery Policy Engine");
 MODULE_LICENSE("GPL v2");
+
