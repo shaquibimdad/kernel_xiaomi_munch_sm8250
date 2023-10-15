@@ -648,7 +648,6 @@ config CHARGER_CROS_USBPD
 
 source "drivers/power/supply/qcom/Kconfig"
 source "drivers/power/supply/qcom_cas/Kconfig"
-source "drivers/power/supply/lionsemi/Kconfig"
 source "drivers/power/supply/maxim/Kconfig"
 source "drivers/power/supply/nuvolta/Kconfig"
 source "drivers/power/supply/renesas/Kconfig"
