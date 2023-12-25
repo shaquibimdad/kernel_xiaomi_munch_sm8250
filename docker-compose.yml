@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  kramel-env:
+    image: shaquibimdad/android-env-ubuntu:v2
+    network_mode: "host"
+    working_dir: /media/shaquib/kernel-dev/daemon_kernel
+    container_name: kramel
+    stdin_open: true
+    tty: true
+    volumes:
+      - /media/shaquib/:/media/shaquib/

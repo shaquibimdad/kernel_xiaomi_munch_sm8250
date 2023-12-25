@@ -146,3 +146,4 @@ out/
 *.log
 build.sh
 buildlos.sh
+KernelSU
